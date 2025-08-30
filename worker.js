@@ -1,5 +1,5 @@
-// Complete Self-Improvement Coaching App Worker
-// Copy this entire code and replace everything in your Cloudflare Worker
+// Worker for Self-Improvement Coaching App
+// File: src/index.js
 
 export default {
 async fetch(request, env, ctx) {
@@ -63,7 +63,7 @@ As an AI coach operating under your personal constitution, I will use YOUR OWN V
 
 Your Framework:
 Core Values: ${constitution.coreValues?.join(’, ‘) || ‘Growth mindset, Self-compassion, Evidence-based thinking’}
-Boundaries: ${constitution.boundaries?.join(’; ‘) || ‘No medical diagnosis, Professional therapy referrals when needed, Crisis escalation protocols’}
+Boundaries: ${constitution.boundaries?.join(’; ‘) || ‘No medical diagnosis, Professional therapy referrals when needed, Crisis escalation protocols’}  
 Goals: ${constitution.goals?.join(’, ’) || ‘Sustainable habits, Emotional regulation, Cognitive clarity’}
 
 NON-SYCOPHANCY APPROACH:
@@ -73,6 +73,8 @@ NON-SYCOPHANCY APPROACH:
 - I’ll offer supportive challenges based on your own framework
 - I won’t validate ideas that conflict with your constitutional principles
 - I’ll celebrate genuine progress while highlighting areas for growth
+
+This means I might say: “This conflicts with your value of X - how might we realign?” rather than just “Great idea!” or “That won’t work.”
 
 Query: ${input}
 
@@ -101,34 +103,11 @@ INSTEAD AIM FOR:
 - Solution-oriented questioning (“What would need to be true for this to work?”)
 - Growth-focused reframing (“Here’s a different lens that might reveal new options”)
 
+Constitutional Framework: ${JSON.stringify(constitution)}
+
 Query: ${input}
 
 Provide honest, challenging analysis that moves the conversation toward better solutions, not just criticism for its own sake.`,
-
-validatingChallenger: (constitution, input) => `
-Role: Validating Challenger - I acknowledge what’s working while identifying areas for growth.
-
-VALIDATION + CHALLENGE FORMULA:
-
-1. First, identify what’s genuinely valid or valuable in your approach
-1. Then, explore gaps, assumptions, or areas for development
-1. Offer specific, actionable alternatives
-1. End with encouragement about next steps
-
-EXAMPLE PATTERN:
-“I can see the logic in [X approach] - it shows [specific strength]. At the same time, I’m curious about [specific gap/assumption]. Have you considered [alternative]? This could help you [specific benefit].”
-
-AVOID:
-
-- Generic praise without specificity
-- Criticism without alternatives
-- Either pure validation OR pure criticism
-
-Your constitutional values: ${constitution.coreValues?.join(’, ’) || ‘Growth, self-compassion, evidence-based thinking’}
-
-Query: ${input}
-
-Provide balanced feedback that validates strengths while identifying growth opportunities.`,
 
 socraticFriction: (constitution, input) => `
 Act as a Socratic coach. Instead of providing direct answers, guide discovery through strategic questioning that creates productive cognitive friction.
@@ -161,7 +140,7 @@ Eliminate all:
 - Corporate politeness and engagement optimization
 - Hedging language and unnecessary qualifiers
 - Emotional cushioning and validation-seeking responses
-- Filler words or marketing-style enthusiasm
+- Filler words, emojis, or marketing-style enthusiasm
 
 Provide:
 
@@ -226,7 +205,7 @@ return { passed: warnings.length === 0, warnings };
 
 // Chat endpoint handler
 async function handleChat(request, env, corsHeaders) {
-const { input, mode = ‘validatingChallenger’, userId = ‘anonymous’ } = await request.json();
+const { input, mode = ‘constitutional’, userId = ‘anonymous’ } = await request.json();
 
 if (!input?.trim()) {
 return new Response(
@@ -239,8 +218,7 @@ JSON.stringify({ error: ‘Input is required’ }),
 const safetyCheck = performSafetyCheck(input);
 
 // Log safety incidents
-if (!safetyCheck.passed && env.DB) {
-try {
+if (!safetyCheck.passed) {
 await env.DB.prepare(
 ‘INSERT INTO safety_logs (id, user_id, warning_type, warning_message, user_input, action_taken, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)’
 ).bind(
@@ -252,37 +230,32 @@ input.substring(0, 500), // Limit stored input length
 ‘warning_displayed’,
 new Date().toISOString()
 ).run();
-} catch (error) {
-console.error(‘Safety log error:’, error);
-}
 }
 
 // Get user’s constitution
 let constitution = {};
-if (env.DB) {
 try {
 const constitutionResult = await env.DB.prepare(
 ‘SELECT core_values, boundaries, goals FROM constitutions WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1’
 ).bind(userId).first();
 
 ```
-  if (constitutionResult) {
-    constitution = {
-      coreValues: constitutionResult.core_values ? JSON.parse(constitutionResult.core_values) : [],
-      boundaries: constitutionResult.boundaries ? JSON.parse(constitutionResult.boundaries) : [],
-      goals: constitutionResult.goals ? JSON.parse(constitutionResult.goals) : []
-    };
-  }
-} catch (error) {
-  console.error('Error fetching constitution:', error);
+if (constitutionResult) {
+  constitution = {
+    coreValues: constitutionResult.core_values ? JSON.parse(constitutionResult.core_values) : [],
+    boundaries: constitutionResult.boundaries ? JSON.parse(constitutionResult.boundaries) : [],
+    goals: constitutionResult.goals ? JSON.parse(constitutionResult.goals) : []
+  };
 }
 ```
 
+} catch (error) {
+console.error(‘Error fetching constitution:’, error);
 }
 
 // Generate prompt using the selected mode
 const prompt = promptingModes[mode] ? promptingModes[mode](constitution, input) :
-promptingModes.validatingChallenger(constitution, input);
+promptingModes.constitutional(constitution, input);
 
 try {
 // Call Claude API
@@ -309,36 +282,30 @@ const claudeData = await claudeResponse.json();
 const aiMessage = claudeData.content[0].text;
 
 // Store conversation in database
-if (env.DB) {
-  try {
-    const conversationId = crypto.randomUUID();
-    await env.DB.prepare(
-      'INSERT INTO conversations (id, user_id, message_role, message_content, prompting_mode, timestamp, safety_flags) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).bind(
-      conversationId,
-      userId,
-      'user',
-      input,
-      mode,
-      new Date().toISOString(),
-      JSON.stringify(safetyCheck.warnings)
-    ).run();
+const conversationId = crypto.randomUUID();
+await env.DB.prepare(
+  'INSERT INTO conversations (id, user_id, message_role, message_content, prompting_mode, timestamp, safety_flags) VALUES (?, ?, ?, ?, ?, ?, ?)'
+).bind(
+  conversationId,
+  userId,
+  'user',
+  input,
+  mode,
+  new Date().toISOString(),
+  JSON.stringify(safetyCheck.warnings)
+).run();
 
-    await env.DB.prepare(
-      'INSERT INTO conversations (id, user_id, message_role, message_content, prompting_mode, timestamp, safety_flags) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).bind(
-      crypto.randomUUID(),
-      userId,
-      'assistant',
-      aiMessage,
-      mode,
-      new Date().toISOString(),
-      null
-    ).run();
-  } catch (error) {
-    console.error('Database save error:', error);
-  }
-}
+await env.DB.prepare(
+  'INSERT INTO conversations (id, user_id, message_role, message_content, prompting_mode, timestamp, safety_flags) VALUES (?, ?, ?, ?, ?, ?, ?)'
+).bind(
+  crypto.randomUUID(),
+  userId,
+  'assistant',
+  aiMessage,
+  mode,
+  new Date().toISOString(),
+  null
+).run();
 
 return new Response(
   JSON.stringify({
@@ -365,13 +332,6 @@ fallback: ‘I apologize, but I cannot process your request right now. Please tr
 // Constitution management
 async function handleConstitution(request, env, corsHeaders) {
 const { constitution, userId = ‘anonymous’ } = await request.json();
-
-if (!env.DB) {
-return new Response(
-JSON.stringify({ error: ‘Database not available’ }),
-{ status: 500, headers: { …corsHeaders, ‘Content-Type’: ‘application/json’ }}
-);
-}
 
 const constitutionId = crypto.randomUUID();
 
@@ -405,13 +365,6 @@ JSON.stringify({ error: ‘Failed to save constitution’ }),
 }
 
 async function getConstitution(request, env, corsHeaders) {
-if (!env.DB) {
-return new Response(
-JSON.stringify({ constitution: null }),
-{ headers: { …corsHeaders, ‘Content-Type’: ‘application/json’ }}
-);
-}
-
 const url = new URL(request.url);
 const userId = url.searchParams.get(‘userId’) || ‘anonymous’;
 
@@ -449,7 +402,7 @@ JSON.stringify({ error: ‘Failed to fetch constitution’ }),
 }
 }
 
-// Complete embedded React app
+// Embedded React app (simplified for Worker deployment)
 function getHTMLApp() {
 return `<!DOCTYPE html>
 
@@ -480,12 +433,6 @@ return `<!DOCTYPE html>
         const [input, setInput] = useState('');
         const [isLoading, setIsLoading] = useState(false);
         const [safetyCheck, setSafetyCheck] = useState({ passed: true, warnings: [] });
-        const [constitution, setConstitution] = useState({
-            coreValues: ['Growth mindset', 'Self-compassion', 'Evidence-based thinking'],
-            boundaries: ['No medical diagnosis', 'Professional therapy referrals when needed', 'Crisis escalation protocols'],
-            goals: ['Sustainable habits', 'Emotional regulation', 'Cognitive clarity']
-        });
-        const [showConstitution, setShowConstitution] = useState(false);
 
         const promptingModes = {
             constitutional: { name: "Constitutional AI", description: "Values-based challenges", icon: Shield },
@@ -538,114 +485,38 @@ return `<!DOCTYPE html>
             }
         };
 
-        const ConstitutionSetup = () => (
-            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                <div className="bg-white rounded-2xl max-w-md w-full p-6 max-h-[80vh] overflow-y-auto">
-                    <h3 className="text-xl font-semibold mb-4">Personal Constitution</h3>
-                    
-                    <div className="space-y-4">
-                        <div>
-                            <label className="block text-sm font-medium mb-2">Core Values</label>
-                            <textarea
-                                value={constitution.coreValues.join('\\n')}
-                                onChange={(e) => setConstitution(prev => ({
-                                    ...prev,
-                                    coreValues: e.target.value.split('\\n').filter(v => v.trim())
-                                }))}
-                                className="w-full border rounded-lg p-3 h-20"
-                                placeholder="One value per line..."
-                            />
-                        </div>
-                        
-                        <div>
-                            <label className="block text-sm font-medium mb-2">Boundaries</label>
-                            <textarea
-                                value={constitution.boundaries.join('\\n')}
-                                onChange={(e) => setConstitution(prev => ({
-                                    ...prev,
-                                    boundaries: e.target.value.split('\\n').filter(v => v.trim())
-                                }))}
-                                className="w-full border rounded-lg p-3 h-20"
-                                placeholder="One boundary per line..."
-                            />
-                        </div>
-                        
-                        <div>
-                            <label className="block text-sm font-medium mb-2">Goals</label>
-                            <textarea
-                                value={constitution.goals.join('\\n')}
-                                onChange={(e) => setConstitution(prev => ({
-                                    ...prev,
-                                    goals: e.target.value.split('\\n').filter(v => v.trim())
-                                }))}
-                                className="w-full border rounded-lg p-3 h-20"
-                                placeholder="One goal per line..."
-                            />
-                        </div>
-                    </div>
-                    
-                    <div className="flex gap-2 mt-6">
-                        <button
-                            onClick={() => setShowConstitution(false)}
-                            className="flex-1 py-3 px-4 bg-gray-100 rounded-lg font-medium"
-                        >
-                            Cancel
-                        </button>
-                        <button
-                            onClick={() => setShowConstitution(false)}
-                            className="flex-1 py-3 px-4 bg-blue-600 text-white rounded-lg font-medium"
-                        >
-                            Save Constitution
-                        </button>
-                    </div>
-                </div>
-            </div>
-        );
-
         return (
             <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white">
                 <header className="border-b border-slate-200 bg-white/80 backdrop-blur-sm sticky top-0 z-10">
                     <div className="max-w-4xl mx-auto px-4 py-4">
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl flex items-center justify-center">
-                                    <Brain className="w-6 h-6 text-white" />
-                                </div>
-                                <div>
-                                    <h1 className="text-xl font-semibold text-slate-900">AI Self-Improvement Coach</h1>
-                                    <p className="text-sm text-slate-600">Advanced AI Prompting • Non-Sycophantic Coaching</p>
-                                </div>
+                        <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl flex items-center justify-center">
+                                <Brain className="w-6 h-6 text-white" />
                             </div>
-                            <button
-                                onClick={() => setShowConstitution(true)}
-                                className="p-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
-                            >
-                                <Settings className="w-5 h-5" />
-                            </button>
+                            <div>
+                                <h1 className="text-xl font-semibold text-slate-900">AI Self-Improvement Coach</h1>
+                                <p className="text-sm text-slate-600">Powered by Advanced AI Prompting</p>
+                            </div>
                         </div>
                     </div>
                 </header>
 
                 <div className="max-w-4xl mx-auto px-4 py-6">
                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 mb-6">
-                        {Object.entries(promptingModes).map(([key, mode]) => {
-                            const Icon = mode.icon;
-                            return (
-                                <button
-                                    key={key}
-                                    onClick={() => setCurrentMode(key)}
-                                    className={\`p-3 rounded-xl border-2 transition-all duration-200 text-center \${
-                                        currentMode === key
-                                            ? 'border-blue-600 bg-blue-50 text-blue-700'
-                                            : 'border-slate-200 hover:border-slate-300 text-slate-700'
-                                    }\`}
-                                >
-                                    <Icon className="w-5 h-5 mx-auto mb-2" />
-                                    <div className="text-sm font-medium">{mode.name}</div>
-                                    <div className="text-xs text-slate-500 mt-1">{mode.description}</div>
-                                </button>
-                            );
-                        })}
+                        {Object.entries(promptingModes).map(([key, mode]) => (
+                            <button
+                                key={key}
+                                onClick={() => setCurrentMode(key)}
+                                className={\`p-2 rounded-xl border-2 transition-all duration-200 text-center \${
+                                    currentMode === key
+                                        ? 'border-blue-600 bg-blue-50 text-blue-700'
+                                        : 'border-slate-200 hover:border-slate-300 text-slate-700'
+                                }\`}
+                            >
+                                <div className="text-xs font-medium">{mode.name}</div>
+                                <div className="text-xs text-slate-500 mt-1">{mode.description}</div>
+                            </button>
+                        ))}
                     </div>
 
                     {!safetyCheck.passed && (
@@ -678,7 +549,6 @@ return `<!DOCTYPE html>
                                 <div className="text-center text-slate-500 py-8">
                                     <MessageCircle className="w-12 h-12 mx-auto mb-3 text-slate-300" />
                                     <p>Start a conversation to begin your coaching session</p>
-                                    <p className="text-xs mt-2">This app uses advanced prompting techniques to avoid flattery while providing constructive challenges</p>
                                 </div>
                             ) : (
                                 conversation.map((message, i) => (
@@ -738,8 +608,6 @@ return `<!DOCTYPE html>
                         <p>For crisis support, contact emergency services or call 988.</p>
                     </div>
                 </div>
-
-                {showConstitution && <ConstitutionSetup />}
             </div>
         );
     }
