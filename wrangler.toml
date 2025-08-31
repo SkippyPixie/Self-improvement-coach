@@ -1,0 +1,8 @@
+name = "meristem"
+main = "src/worker.js"
+compatibility_date = "2024-08-30"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "self-improvement-coach-db"
+database_id = "00000000-0000-0000-0000-000000000000"
